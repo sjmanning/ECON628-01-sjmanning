@@ -1,0 +1,52 @@
+import requests
+import json
+import csv
+import os
+import datetime
+import tango_create_order
+
+# Extract already paid survey access codes.
+paid_survey_access_codes = set([])
+for csvfile in filter(lambda x:x.endswith(('.csv')), os.listdir('s2_processed_cards')):
+	with open('s2_processed_cards/%s' % csvfile) as csvin:
+		reader = csv.DictReader(csvin)
+		for r in reader:
+			if r['api_success'] == 'True':
+				paid_survey_access_codes.add(r['survey_access_code'])
+			else:
+				print 'Detected failed payment.'
+
+
+# Call RedCap API and keep needed fields.
+payload = {
+	'token': 'xx',
+	'content': 'record',
+	'format': 'json',
+	'type': 'flat'
+}
+
+desired_fields = ['version_b_complete', 'email_ver_b', 'survey_access_code', 'firstname']
+records = []
+
+for r in json.loads(requests.post('https://redcap.stanford.edu/api/', data = payload).text):
+	new_dict = { your_key: r[your_key] for your_key in desired_fields }
+	records.append(new_dict)
+
+
+# Process payments.
+with open('s2_processed_cards/cards_%s.csv' % datetime.datetime.utcnow(), 'w') as csvout:
+	fieldnames = ['survey_access_code', 'email', 'api_success']
+	writer = csv.DictWriter(csvout, fieldnames=fieldnames)
+	writer.writeheader()
+	for r in records:
+		if r['survey_access_code'] not in paid_survey_access_codes:
+			version = 'b'
+			complete_field_name = version
+
+			if r['version_%s_complete' % complete_field_name] == '2':
+				email = r['email_ver_%s' % version]
+				api_success = tango_create_order.CreateOrder(r['firstname'], email, 15)
+				writer.writerow({'email': email,
+					'survey_access_code': r['survey_access_code'],
+					'api_success': api_success})
+
